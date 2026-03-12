@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Devis CECB — Eta Consult</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav class="main-nav">
+        <span class="brand">Devis CECB</span>
+        <a href="#" class="active" data-view="form">Nouveau devis</a>
+        <a href="#" data-view="history">Historique</a>
+        <a href="#" data-view="texts" class="nav-admin-only">Textes</a>
+    </nav>
+
+    <!-- ═══════════════ VIEW: FORM ═══════════════ -->
+    <div class="container" id="view-form">
+        <div class="hero">
+            <h1>Nouveau devis CECB</h1>
+            <p class="subtitle">Generateur de devis CECB, CECB Plus et Conseil Incitatif pour Bexio</p>
+        </div>
+
+        <!-- Config Bexio (collapsible) -->
+        <details class="config-panel" id="configPanel">
+            <summary>Configuration Bexio</summary>
+            <div class="config-body">
+                <div class="row">
+                    <div class="form-group">
+                        <label for="bexioToken">Token API Bexio</label>
+                        <input type="password" id="bexioToken" placeholder="Votre token Bexio...">
+                    </div>
+                    <div class="form-group">
+                        <label for="googleKey">Cle API Google (distance, optionnel)</label>
+                        <input type="password" id="googleKey" placeholder="AIza...">
+                    </div>
+                </div>
+                <div class="config-actions">
+                    <button class="btn btn-sm" onclick="saveConfig()">Sauvegarder</button>
+                    <span class="config-status" id="configStatus"></span>
+                </div>
+            </div>
+        </details>
+
+        <!-- Tariff management panel -->
+        <details class="config-panel" id="tarifPanel">
+            <summary>Tarifs et parametres de calcul</summary>
+            <div class="config-body">
+                <div class="tarif-grid" id="tarifGrid"></div>
+                <div class="config-actions">
+                    <button class="btn btn-sm" onclick="saveTarifs()">Sauvegarder les tarifs</button>
+                    <button class="btn btn-sm" style="background:#64748B" onclick="resetTarifs()">Reinitialiser</button>
+                    <span class="config-status" id="tarifStatus"></span>
+                </div>
+            </div>
+        </details>
+
+        <div class="form-container">
+            <!-- Left: Form -->
+            <div class="form-panel">
+                <form id="devisForm">
+                    <!-- SECTION: Client -->
+                    <div class="section">
+                        <div class="section-title">Coordonnees du client</div>
+
+                        <div class="form-group">
+                            <label for="type_contact">Type de contact <span class="req">*</span></label>
+                            <select id="type_contact" name="type_contact">
+                                <option value="Prive">Prive</option>
+                                <option value="Societe">Societe</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group hidden" id="group_nom_entreprise">
+                            <label for="nom_entreprise">Nom de l'entreprise <span class="req">*</span></label>
+                            <input type="text" id="nom_entreprise" name="nom_entreprise">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="appellation">Appellation <span class="req">*</span></label>
+                            <select id="appellation" name="appellation">
+                                <option value="Mme">Madame</option>
+                                <option value="M.">Monsieur</option>
+                                <option value="Mx">Neutre</option>
+                            </select>
+                        </div>
+
+                        <div class="row">
+                            <div class="form-group">
+                                <label for="nom_famille">Nom de famille <span class="req">*</span></label>
+                                <input type="text" id="nom_famille" name="nom_famille" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="prenom">Prenom <span class="req">*</span></label>
+                                <input type="text" id="prenom" name="prenom" required>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="form-group">
+                                <label for="email">Email <span class="req">*</span></label>
+                                <input type="email" id="email" name="email" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="telephone">Telephone</label>
+                                <input type="tel" id="telephone" name="telephone" placeholder="+41 79 123 45 67">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SECTION: Adresse facturation -->
+                    <div class="section">
+                        <div class="section-title">Adresse de facturation</div>
+
+                        <div class="form-group">
+                            <label for="rue_facturation">Adresse <span class="req">*</span></label>
+                            <div class="autocomplete-wrap">
+                                <input type="text" id="rue_facturation" name="rue_facturation" placeholder="Commencez a taper l'adresse..." required autocomplete="off">
+                                <div class="suggestions-box" id="sugFacturation"></div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="form-group">
+                                <label for="npa_facturation">NPA <span class="req">*</span></label>
+                                <input type="text" id="npa_facturation" name="npa_facturation" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="localite_facturation">Localite <span class="req">*</span></label>
+                                <input type="text" id="localite_facturation" name="localite_facturation" required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SECTION: Adresse batiment -->
+                    <div class="section">
+                        <div class="section-title">Adresse du batiment</div>
+
+                        <div class="checkbox-row">
+                            <input type="checkbox" id="adresse_identique" name="adresse_identique">
+                            <label for="adresse_identique">Identique a l'adresse de facturation</label>
+                        </div>
+
+                        <div id="adresse_batiment_fields">
+                            <div class="form-group">
+                                <label for="rue_batiment">Adresse du batiment <span class="req">*</span></label>
+                                <div class="autocomplete-wrap">
+                                    <input type="text" id="rue_batiment" name="rue_batiment" placeholder="Commencez a taper l'adresse..." required autocomplete="off">
+                                    <div class="suggestions-box" id="sugBatiment"></div>
+                                </div>
+                            </div>
+
+                            <div class="row">
+                                <div class="form-group">
+                                    <label for="npa_batiment">NPA <span class="req">*</span></label>
+                                    <input type="text" id="npa_batiment" name="npa_batiment" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="localite_batiment">Localite <span class="req">*</span></label>
+                                    <input type="text" id="localite_batiment" name="localite_batiment" required>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SECTION: Batiment -->
+                    <div class="section">
+                        <div class="section-title">Caracteristiques du batiment</div>
+
+                        <div class="form-group">
+                            <label for="type_certificat">Type de certificat <span class="req">*</span></label>
+                            <select id="type_certificat" name="type_certificat">
+                                <option value="CECB">CECB</option>
+                                <option value="CECB Plus">CECB Plus</option>
+                                <option value="Conseil Incitatif">Conseil Incitatif</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="nombre_etages">Nombre d'etages hors-sol <span class="req">*</span></label>
+                            <input type="number" id="nombre_etages" name="nombre_etages" min="1" max="20" value="2" required>
+                            <span class="field-hint">Valeur du RegBL. Modifiable si incorrecte.</span>
+                        </div>
+
+                        <div class="row">
+                            <div class="form-group">
+                                <label for="sous_sol">Niveaux en sous-sol</label>
+                                <select id="sous_sol" name="sous_sol">
+                                    <option value="Non chauffe ou inexistant">Non chauffe ou inexistant</option>
+                                    <option value="Partiellement chauffe 50%">Partiellement chauffe 50%</option>
+                                    <option value="Chauffe 30%">Chauffe 30%</option>
+                                    <option value="Chauffe">Chauffe</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="combles">Combles</label>
+                                <select id="combles" name="combles">
+                                    <option value="Non chauffe ou inexistant">Non chauffe ou inexistant</option>
+                                    <option value="Partiellement chauffe 50%">Partiellement chauffe 50%</option>
+                                    <option value="Chauffe 30%">Chauffe 30%</option>
+                                    <option value="Chauffe">Chauffe</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-group" id="group_delai">
+                            <label for="delai">Delai</label>
+                            <select id="delai" name="delai">
+                                <option value="Normal">Normal</option>
+                                <option value="Express (+135 CHF)">Express (+135 CHF)</option>
+                                <option value="Urgent (+270 CHF)">Urgent (+270 CHF)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="contexte">Contexte</label>
+                            <select id="contexte" name="contexte">
+                                <option value="Vente">Vente</option>
+                                <option value="Remplacement de chaudiere fossile">Remplacement de chaudiere fossile</option>
+                                <option value="Reflexion/entretien du bien">Reflexion/entretien du bien</option>
+                                <option value="Travaux de renovation">Travaux de renovation</option>
+                                <option value="Projet de loi sur l'Energie (VD)">Projet de loi sur l'Energie (VD)</option>
+                                <option value="Autre">Autre</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="message">Message (optionnel)</label>
+                            <textarea id="message" name="message" placeholder="Informations complementaires..."></textarea>
+                        </div>
+                    </div>
+
+                    <!-- Buttons -->
+                    <div class="button-row">
+                        <button type="button" class="btn btn-secondary" onclick="resetForm()">Reinitialiser</button>
+                        <button type="submit" class="btn btn-primary" id="submitBtn">Creer le devis</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Right: Preview + Logs -->
+            <div class="side-panel">
+                <!-- Price preview -->
+                <div class="preview-card">
+                    <h2>Apercu du prix</h2>
+                    <div id="pricePreview" class="price-body">
+                        <div class="price-placeholder">Remplissez le formulaire pour voir l'apercu...</div>
+                    </div>
+                </div>
+
+                <!-- Building data -->
+                <div class="preview-card">
+                    <h2>Donnees du batiment</h2>
+                    <div id="buildingData" class="building-body">
+                        <div class="price-placeholder">En attente de l'adresse du batiment...</div>
+                    </div>
+                </div>
+
+                <!-- Logs -->
+                <div class="preview-card">
+                    <h2>Logs</h2>
+                    <div id="logs" class="logs-body">
+                        <div class="log-entry log-info"><span class="log-time"></span> Formulaire pret.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════ VIEW: HISTORY ═══════════════ -->
+    <div class="container" id="view-history" style="display:none">
+        <div class="hero">
+            <h1>Historique des devis</h1>
+            <p class="subtitle">Soumissions enregistrees localement</p>
+        </div>
+
+        <div class="history-actions">
+            <button class="btn btn-sm" onclick="exportHistoryCSV()">Exporter CSV</button>
+            <button class="btn btn-sm" style="background:#DC2626" onclick="clearHistory()">Vider l'historique</button>
+            <span id="historyCount" class="config-status"></span>
+        </div>
+
+        <div id="historyTable" class="history-container">
+            <div class="price-placeholder">Aucune soumission enregistree</div>
+        </div>
+    </div>
+
+    <!-- ═══════════════ VIEW: TEXTS (Admin) ═══════════════ -->
+    <div class="container" id="view-texts" style="display:none">
+        <div class="hero">
+            <h1>Administration des textes</h1>
+            <p class="subtitle">Textes legaux et descriptions pour les devis Bexio</p>
+        </div>
+
+        <div id="textsEditor" class="texts-editor"></div>
+
+        <div class="button-row" style="max-width:800px;margin:24px auto 0">
+            <button class="btn btn-secondary" onclick="resetTexts()">Reinitialiser par defaut</button>
+            <button class="btn btn-primary" onclick="saveTexts()">Sauvegarder les textes</button>
+        </div>
+        <div id="textsStatus" class="config-status" style="text-align:center;margin-top:12px"></div>
+    </div>
+
+    <script src="auth.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
