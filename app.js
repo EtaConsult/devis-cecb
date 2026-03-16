@@ -693,7 +693,7 @@ async function searchContact(name) {
     return data;
 }
 
-async function createContact(formData) {
+function buildContactPayload(formData) {
     const isPrive = formData.type_contact === 'Prive';
     const payload = {
         contact_type_id: isPrive ? 1 : 2,
@@ -709,14 +709,21 @@ async function createContact(formData) {
         owner_id: BEXIO_IDS.user_id
     };
 
-    if (isPrive) {
-        const salutMap = { 'Mme': 1, 'M.': 2 };
-        if (salutMap[formData.appellation]) {
-            payload.salutation_id = salutMap[formData.appellation];
-        }
+    const salutMap = { 'Mme': 1, 'M.': 2 };
+    if (salutMap[formData.appellation]) {
+        payload.salutation_id = salutMap[formData.appellation];
     }
 
-    return bexioRequest('POST', '/2.0/contact', payload);
+    return payload;
+}
+
+async function createContact(formData) {
+    return bexioRequest('POST', '/2.0/contact', buildContactPayload(formData));
+}
+
+async function updateContact(contactId, formData) {
+    const payload = buildContactPayload(formData);
+    return bexioRequest('POST', `/2.0/contact/${contactId}`, payload);
 }
 
 async function createBexioQuote(formData, contactId) {
@@ -897,7 +904,9 @@ async function handleSubmit(e) {
 
         if (contacts.length > 0) {
             contactId = contacts[0].id;
-            addLog(`Contact existant trouve: ID ${contactId}`, 'success');
+            addLog(`Contact existant trouve: ID ${contactId} — mise a jour...`, 'info');
+            await updateContact(contactId, data);
+            addLog(`Contact mis a jour: ID ${contactId}`, 'success');
         } else {
             addLog('Creation du contact...', 'info');
             const newContact = await createContact(data);
