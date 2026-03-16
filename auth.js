@@ -297,6 +297,30 @@ function showUserBar() {
         adminBtn.textContent = 'Gestion des acces';
         adminBtn.addEventListener('click', toggleAdminPanel);
         bar.appendChild(adminBtn);
+
+        const configBtn = document.createElement('button');
+        configBtn.className = 'auth-admin-link';
+        configBtn.textContent = 'Configuration';
+        configBtn.addEventListener('click', function() {
+            const panel = document.getElementById('configPanel');
+            if (panel) {
+                panel.open = !panel.open;
+                panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        });
+        bar.appendChild(configBtn);
+
+        const tarifBtn = document.createElement('button');
+        tarifBtn.className = 'auth-admin-link';
+        tarifBtn.textContent = 'Tarifs';
+        tarifBtn.addEventListener('click', function() {
+            var panel = document.getElementById('tarifPanel');
+            if (panel) {
+                panel.open = !panel.open;
+                panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        });
+        bar.appendChild(tarifBtn);
     }
 
     const logoutBtn = document.createElement('button');
