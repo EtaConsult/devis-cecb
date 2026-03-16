@@ -49,6 +49,8 @@ const BEXIO_BASE_URL = 'https://api.bexio.com';
 let buildingData = null;
 let searchTimeout = null;
 let currentView = 'form';
+let tempTarifs = null; // Tarifs temporaires (one-shot, en memoire uniquement)
+const TARIF_HISTORY_KEY = 'devis_tarifs_history';
 
 // ==========================================
 // VIEW NAVIGATION
@@ -355,23 +357,57 @@ function renderTarifGrid() {
     }
 }
 
+function getActiveTarifs() {
+    return tempTarifs || TARIFS;
+}
+
 function saveTarifs() {
+    const isOneShot = document.getElementById('tarifOneShot') && document.getElementById('tarifOneShot').checked;
+    const oldTarifs = Object.assign({}, getActiveTarifs());
+
+    // Lire les nouvelles valeurs depuis le formulaire
+    const newTarifs = {};
     const inputs = document.querySelectorAll('#tarifGrid input');
     inputs.forEach(inp => {
         const key = inp.dataset.key;
         const val = parseFloat(inp.value);
-        if (!isNaN(val)) TARIFS[key] = val;
+        if (!isNaN(val)) newTarifs[key] = val;
     });
-    localStorage.setItem('devis_tarifs', JSON.stringify(TARIFS));
-    document.getElementById('tarifStatus').textContent = 'Tarifs sauvegardes !';
-    setTimeout(() => document.getElementById('tarifStatus').textContent = '', 2000);
+
+    // Enregistrer dans l'historique
+    logTarifChange(isOneShot ? 'temporaire' : 'permanent', oldTarifs, newTarifs);
+
+    if (isOneShot) {
+        // Mode temporaire : stocker en memoire uniquement
+        tempTarifs = Object.assign({}, TARIFS, newTarifs);
+        document.getElementById('tarifStatus').textContent = 'Tarifs temporaires appliques (prochain devis uniquement)';
+        addLog('Tarifs temporaires actifs (prochain devis uniquement)', 'success');
+    } else {
+        // Mode permanent : stocker dans localStorage
+        Object.assign(TARIFS, newTarifs);
+        localStorage.setItem('devis_tarifs', JSON.stringify(TARIFS));
+        tempTarifs = null;
+        document.getElementById('tarifStatus').textContent = 'Tarifs sauvegardes !';
+        addLog('Tarifs mis a jour (permanent)', 'success');
+    }
+
+    setTimeout(() => document.getElementById('tarifStatus').textContent = '', 3000);
     updatePricePreview();
-    addLog('Tarifs mis a jour', 'success');
+    renderTarifHistory();
+}
+
+function clearTempTarifs() {
+    tempTarifs = null;
+    loadTarifs();
+    renderTarifGrid();
+    updatePricePreview();
+    renderTarifHistory();
+    addLog('Tarifs temporaires annules', 'info');
 }
 
 function resetTarifs() {
     localStorage.removeItem('devis_tarifs');
-    // Reset to defaults
+    tempTarifs = null;
     Object.assign(TARIFS, {
         base_price: 500, km_factor_proche: 0.9, km_factor_loin: 0.7, km_seuil: 25,
         surface_factor_petit: 0.6, surface_factor_grand: 0.5, surface_seuil: 750,
@@ -382,9 +418,76 @@ function resetTarifs() {
     });
     renderTarifGrid();
     updatePricePreview();
+    renderTarifHistory();
     document.getElementById('tarifStatus').textContent = 'Tarifs reinitialises';
     setTimeout(() => document.getElementById('tarifStatus').textContent = '', 2000);
     addLog('Tarifs reinitialises aux valeurs par defaut', 'info');
+}
+
+// ==========================================
+// TARIF HISTORY
+// ==========================================
+function logTarifChange(type, oldTarifs, newTarifs) {
+    const changes = [];
+    for (const key of Object.keys(newTarifs)) {
+        const oldVal = oldTarifs[key];
+        const newVal = newTarifs[key];
+        if (oldVal !== newVal) {
+            const meta = TARIF_LABELS[key] || { label: key, unit: '' };
+            changes.push({ key, label: meta.label, old: oldVal, new: newVal, unit: meta.unit });
+        }
+    }
+    if (changes.length === 0) return;
+
+    const session = typeof getSession === 'function' ? getSession() : null;
+    const entry = {
+        date: new Date().toISOString(),
+        user: session ? session.email : 'inconnu',
+        type,
+        changes
+    };
+
+    let history = [];
+    try { history = JSON.parse(localStorage.getItem(TARIF_HISTORY_KEY)) || []; } catch (e) { /* ignore */ }
+    history.unshift(entry);
+    if (history.length > 50) history = history.slice(0, 50);
+    localStorage.setItem(TARIF_HISTORY_KEY, JSON.stringify(history));
+}
+
+function renderTarifHistory() {
+    const el = document.getElementById('tarifHistory');
+    if (!el) return;
+
+    // Afficher/masquer le bouton d'annulation des tarifs temporaires
+    const cancelBtn = document.getElementById('cancelTempTarifs');
+    if (cancelBtn) cancelBtn.style.display = tempTarifs ? '' : 'none';
+
+    let history = [];
+    try { history = JSON.parse(localStorage.getItem(TARIF_HISTORY_KEY)) || []; } catch (e) { /* ignore */ }
+
+    if (history.length === 0) {
+        el.innerHTML = '<div style="color:#94A3B8;font-size:13px;padding:8px 0">Aucune modification enregistree</div>';
+        return;
+    }
+
+    let html = '<table class="history-table" style="font-size:12px"><thead><tr>';
+    html += '<th>Date</th><th>Utilisateur</th><th>Type</th><th>Modifications</th>';
+    html += '</tr></thead><tbody>';
+
+    history.slice(0, 20).forEach(entry => {
+        const date = new Date(entry.date).toLocaleDateString('fr-CH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const badgeClass = entry.type === 'temporaire' ? 'badge-sm badge-conseil' : 'badge-sm badge-cecb';
+        const changesHtml = entry.changes.map(c => `${c.label}: ${c.old} → ${c.new} ${c.unit || ''}`).join('<br>');
+        html += `<tr>`;
+        html += `<td>${date}</td>`;
+        html += `<td>${escapeHtml(entry.user)}</td>`;
+        html += `<td><span class="${badgeClass}">${entry.type}</span></td>`;
+        html += `<td>${changesHtml}</td>`;
+        html += `</tr>`;
+    });
+
+    html += '</tbody></table>';
+    el.innerHTML = html;
 }
 
 // ==========================================
@@ -574,12 +677,14 @@ function getCoefficient(value) {
 }
 
 function getForfaitExecution(delai) {
-    if (delai.includes('Express')) return TARIFS.forfait_express;
-    if (delai.includes('Urgent')) return TARIFS.forfait_urgent;
-    return TARIFS.forfait_normal;
+    const t = getActiveTarifs();
+    if (delai.includes('Express')) return t.forfait_express;
+    if (delai.includes('Urgent')) return t.forfait_urgent;
+    return t.forfait_normal;
 }
 
 function calculatePricing() {
+    const t = getActiveTarifs();
     const type = document.getElementById('type_certificat').value;
     const gastw = parseInt(document.getElementById('nombre_etages').value) || 2;
     const sousSol = document.getElementById('sous_sol').value;
@@ -599,25 +704,25 @@ function calculatePricing() {
     const distKm = 0;
 
     // CECB price
-    const kmFactor = distKm < TARIFS.km_seuil ? TARIFS.km_factor_proche : TARIFS.km_factor_loin;
-    const surfFactor = sEq < TARIFS.surface_seuil ? TARIFS.surface_factor_petit : TARIFS.surface_factor_grand;
-    const cecbPrice = Math.round(TARIFS.base_price + (distKm * kmFactor) + (sEq * surfFactor));
+    const kmFactor = distKm < t.km_seuil ? t.km_factor_proche : t.km_factor_loin;
+    const surfFactor = sEq < t.surface_seuil ? t.surface_factor_petit : t.surface_factor_grand;
+    const cecbPrice = Math.round(t.base_price + (distKm * kmFactor) + (sEq * surfFactor));
 
     const lines = [];
     lines.push({ label: `CECB (Seq: ${Math.round(sEq)} m2)`, value: `${cecbPrice} CHF` });
-    lines.push({ label: 'Frais emission CECB', value: `${TARIFS.frais_emission_cecb} CHF` });
-    lines.push({ label: 'Mise a jour apres transfert', value: `${TARIFS.frais_maj_transfert_cecb} CHF` });
+    lines.push({ label: 'Frais emission CECB', value: `${t.frais_emission_cecb} CHF` });
+    lines.push({ label: 'Mise a jour apres transfert', value: `${t.frais_maj_transfert_cecb} CHF` });
 
-    let total = cecbPrice + TARIFS.frais_emission_cecb + TARIFS.frais_maj_transfert_cecb;
+    let total = cecbPrice + t.frais_emission_cecb + t.frais_maj_transfert_cecb;
 
     // CECB Plus
     if (type === 'CECB Plus') {
         let plusFactor;
-        if (sEq < TARIFS.plus_seuil_petit) plusFactor = TARIFS.plus_factor_petit;
-        else if (sEq < TARIFS.plus_seuil_grand) plusFactor = TARIFS.plus_factor_moyen;
-        else plusFactor = TARIFS.plus_factor_grand;
+        if (sEq < t.plus_seuil_petit) plusFactor = t.plus_factor_petit;
+        else if (sEq < t.plus_seuil_grand) plusFactor = t.plus_factor_moyen;
+        else plusFactor = t.plus_factor_grand;
 
-        const plusPrice = Math.min(TARIFS.plus_price_max, Math.round(cecbPrice * plusFactor));
+        const plusPrice = Math.min(t.plus_price_max, Math.round(cecbPrice * plusFactor));
         lines.push({ label: `CECB Plus (x${plusFactor})`, value: `${plusPrice} CHF` });
         total += plusPrice;
     }
@@ -648,7 +753,11 @@ function updatePricePreview() {
 
     const badgeClass = pricing.type === 'CECB Plus' ? 'badge-plus' : 'badge-cecb';
 
-    let html = `<div style="margin-bottom:8px"><span class="price-badge ${badgeClass}">${pricing.type}</span></div>`;
+    let html = '';
+    if (tempTarifs) {
+        html += `<div style="margin-bottom:8px;padding:6px 10px;background:#FFF7ED;border:1px solid #FDBA74;border-radius:6px;font-size:12px;color:#C2410C;font-weight:600">&#9888; Tarifs temporaires actifs — prochain devis uniquement <button onclick="clearTempTarifs()" style="margin-left:8px;font-size:11px;padding:2px 8px;border:1px solid #C2410C;border-radius:3px;background:#fff;color:#C2410C;cursor:pointer">Annuler</button></div>`;
+    }
+    html += `<div style="margin-bottom:8px"><span class="price-badge ${badgeClass}">${pricing.type}</span></div>`;
     pricing.lines.forEach(l => {
         html += `<div class="price-line"><span class="price-label">${l.label}</span><span class="price-value">${l.value}</span></div>`;
     });
@@ -936,6 +1045,15 @@ async function handleSubmit(e) {
         });
         addLog('Soumission enregistree dans l\'historique', 'success');
 
+        // 4. Clear temp tarifs after successful submission
+        if (tempTarifs) {
+            tempTarifs = null;
+            loadTarifs();
+            renderTarifGrid();
+            updatePricePreview();
+            addLog('Tarifs temporaires expires (retour aux tarifs permanents)', 'info');
+        }
+
         // Show success
         submitBtn.textContent = 'Devis cree !';
         setTimeout(() => {
@@ -1048,6 +1166,7 @@ window.addEventListener('DOMContentLoaded', () => {
     loadTarifs();
     loadConfig();
     renderTarifGrid();
+    renderTarifHistory();
     setupAutocomplete('rue_facturation', 'sugFacturation', 'facturation');
     setupAutocomplete('rue_batiment', 'sugBatiment', 'batiment');
     setupFormListeners();
