@@ -507,6 +507,18 @@ h2 {
 .log-error { color: #DC2626; }
 .log-warning { color: #D97706; }
 
+/* ====== DRAFTS ====== */
+.drafts-body { max-height: 250px; overflow-y: auto; }
+.draft-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px; border-bottom: 1px solid #F1F5F9;
+    transition: background .15s;
+}
+.draft-item:hover { background: #F8FAFC; }
+.draft-info { display: flex; flex-direction: column; gap: 2px; }
+.draft-label { font-size: 13px; font-weight: 500; color: #334155; }
+.draft-date { font-size: 11px; color: #94A3B8; }
+
 /* ====== HIDDEN ====== */
 .hidden { display: none; }
 

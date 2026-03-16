@@ -25,9 +25,14 @@
         <details class="config-panel" id="configPanel">
             <summary>Configuration</summary>
             <div class="config-body">
+                <div class="form-group">
+                    <label for="proxyUrl">URL du proxy (Script Runner)</label>
+                    <input type="text" id="proxyUrl" placeholder="https://etaconsult.pythonanywhere.com">
+                    <span class="field-hint">Si renseigne, les appels Bexio passent par le proxy (necessaire sur GitHub Pages). Laisser vide pour appel direct.</span>
+                </div>
                 <div class="row">
                     <div class="form-group">
-                        <label for="bexioToken">Token API Bexio</label>
+                        <label for="bexioToken">Token API Bexio (appel direct uniquement)</label>
                         <input type="password" id="bexioToken" placeholder="Votre token Bexio...">
                     </div>
                     <div class="form-group">
@@ -242,6 +247,7 @@
                     <!-- Buttons -->
                     <div class="button-row">
                         <button type="button" class="btn btn-secondary" onclick="resetForm()">Reinitialiser</button>
+                        <button type="button" class="btn btn-sm" style="background:#6366F1" onclick="saveDraft()">Sauvegarder brouillon</button>
                         <button type="submit" class="btn btn-primary" id="submitBtn">Creer le devis</button>
                     </div>
                 </form>
@@ -254,6 +260,14 @@
                     <h2>Apercu du prix</h2>
                     <div id="pricePreview" class="price-body">
                         <div class="price-placeholder">Remplissez le formulaire pour voir l'apercu...</div>
+                    </div>
+                </div>
+
+                <!-- Drafts -->
+                <div class="preview-card">
+                    <h2>Brouillons</h2>
+                    <div id="draftsList" class="drafts-body">
+                        <div style="color:#94A3B8;font-size:13px">Aucun brouillon</div>
                     </div>
                 </div>
 

@@ -45,12 +45,118 @@ const BEXIO_IDS = {
 const ETA_CONSULT_COORDS = { lat: 46.4571, lon: 6.3375 };
 const BEXIO_BASE_URL = 'https://api.bexio.com';
 
+// Proxy URL: si l'app tourne sur GitHub Pages, utiliser le proxy PythonAnywhere
+// Sinon (localhost), appeler Bexio directement
+const PROXY_URL = localStorage.getItem('proxy_url') || '';
+
+function getBexioUrl(endpoint) {
+    // endpoint commence par /2.0/...
+    if (PROXY_URL) {
+        // Proxy: /api/bexio/2.0/contact → PythonAnywhere relaie vers Bexio
+        return PROXY_URL + '/api/bexio' + endpoint;
+    }
+    return BEXIO_BASE_URL + endpoint;
+}
+
 // State
 let buildingData = null;
 let searchTimeout = null;
 let currentView = 'form';
 let tempTarifs = null; // Tarifs temporaires (one-shot, en memoire uniquement)
 const TARIF_HISTORY_KEY = 'devis_tarifs_history';
+
+// ==========================================
+// DRAFTS (BROUILLONS)
+// ==========================================
+const DRAFTS_KEY = 'devis-drafts';
+
+function getDrafts() {
+    try { return JSON.parse(localStorage.getItem(DRAFTS_KEY)) || []; }
+    catch (e) { return []; }
+}
+
+function saveDraft() {
+    const form = document.getElementById('devisForm');
+    const fd = new FormData(form);
+    const data = {};
+    fd.forEach((v, k) => { data[k] = v; });
+
+    // Generer un label lisible
+    const client = data.type_contact === 'Societe'
+        ? (data.nom_entreprise || 'Societe')
+        : ((data.prenom || '') + ' ' + (data.nom_famille || '')).trim() || 'Sans nom';
+    const adresse = data.rue_facturation || data.rue_batiment || '';
+
+    const drafts = getDrafts();
+    const draft = {
+        id: Date.now(),
+        date: new Date().toISOString(),
+        label: client + (adresse ? ' — ' + adresse : ''),
+        data
+    };
+
+    drafts.unshift(draft);
+    if (drafts.length > 20) drafts.pop();
+    localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+    renderDraftsList();
+    addLog('Brouillon sauvegarde: ' + draft.label, 'success');
+}
+
+function loadDraft(id) {
+    const drafts = getDrafts();
+    const draft = drafts.find(d => d.id === id);
+    if (!draft || !draft.data) return;
+
+    const fd = draft.data;
+    Object.keys(fd).forEach(key => {
+        const el = document.getElementById(key);
+        if (el) {
+            el.value = fd[key];
+            if (el.tagName === 'SELECT') el.dispatchEvent(new Event('change'));
+        }
+    });
+
+    // Re-check adresse identique
+    if (fd.adresse_identique === 'on') {
+        document.getElementById('adresse_identique').checked = true;
+        document.getElementById('adresse_identique').dispatchEvent(new Event('change'));
+    }
+
+    addLog('Brouillon charge: ' + draft.label, 'success');
+    updatePricePreview();
+}
+
+function deleteDraft(id) {
+    let drafts = getDrafts();
+    drafts = drafts.filter(d => d.id !== id);
+    localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+    renderDraftsList();
+    addLog('Brouillon supprime', 'info');
+}
+
+function renderDraftsList() {
+    const el = document.getElementById('draftsList');
+    if (!el) return;
+
+    const drafts = getDrafts();
+    if (drafts.length === 0) {
+        el.innerHTML = '<div style="color:#94A3B8;font-size:13px">Aucun brouillon</div>';
+        return;
+    }
+
+    let html = '';
+    drafts.forEach(d => {
+        const date = new Date(d.date).toLocaleDateString('fr-CH', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+        html += `<div class="draft-item">`;
+        html += `<div class="draft-info" onclick="loadDraft(${d.id})" style="cursor:pointer;flex:1">`;
+        html += `<span class="draft-label">${escapeHtml(d.label)}</span>`;
+        html += `<span class="draft-date">${date}</span>`;
+        html += `</div>`;
+        html += `<button class="btn-del" onclick="deleteDraft(${d.id})" title="Supprimer">✕</button>`;
+        html += `</div>`;
+    });
+    el.innerHTML = html;
+}
 
 // ==========================================
 // VIEW NAVIGATION
@@ -289,18 +395,24 @@ function addLog(msg, type = 'info') {
 function saveConfig() {
     const token = document.getElementById('bexioToken').value;
     const gkey = document.getElementById('googleKey').value;
+    const proxy = document.getElementById('proxyUrl').value.replace(/\/+$/, ''); // trim trailing slashes
     if (token) localStorage.setItem('bexio_token', token);
     if (gkey) localStorage.setItem('google_key', gkey);
+    localStorage.setItem('proxy_url', proxy);
     document.getElementById('configStatus').textContent = 'Sauvegarde !';
     setTimeout(() => document.getElementById('configStatus').textContent = '', 2000);
-    addLog('Configuration sauvegardee', 'success');
+    addLog('Configuration sauvegardee' + (proxy ? ' (proxy: ' + proxy + ')' : ' (appel direct)'), 'success');
+    // Recharger pour appliquer le changement de proxy
+    location.reload();
 }
 
 function loadConfig() {
     const token = localStorage.getItem('bexio_token');
     const gkey = localStorage.getItem('google_key');
+    const proxy = localStorage.getItem('proxy_url');
     if (token) document.getElementById('bexioToken').value = token;
     if (gkey) document.getElementById('googleKey').value = gkey;
+    if (proxy) document.getElementById('proxyUrl').value = proxy;
 }
 
 // ==========================================
@@ -774,20 +886,30 @@ function updatePricePreview() {
 // BEXIO API
 // ==========================================
 async function bexioRequest(method, endpoint, body = null) {
-    const token = localStorage.getItem('bexio_token');
-    if (!token) throw new Error('Token Bexio manquant. Configurez-le dans le panneau en haut.');
+    const url = getBexioUrl(endpoint);
+    const useProxy = !!PROXY_URL;
 
     const opts = {
         method,
         headers: {
             'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
+            'Content-Type': 'application/json'
         }
     };
+
+    // Si pas de proxy, ajouter le token Bearer (appel direct)
+    if (!useProxy) {
+        const token = localStorage.getItem('bexio_token');
+        if (!token) throw new Error('Token Bexio manquant. Configurez-le dans Configuration.');
+        opts.headers['Authorization'] = `Bearer ${token}`;
+    } else {
+        // Via proxy: inclure credentials pour la session Flask
+        opts.credentials = 'include';
+    }
+
     if (body) opts.body = JSON.stringify(body);
 
-    const res = await fetch(`${BEXIO_BASE_URL}${endpoint}`, opts);
+    const res = await fetch(url, opts);
     if (!res.ok) {
         const text = await res.text();
         throw new Error(`Bexio ${res.status}: ${text}`);
@@ -1167,6 +1289,7 @@ window.addEventListener('DOMContentLoaded', () => {
     loadConfig();
     renderTarifGrid();
     renderTarifHistory();
+    renderDraftsList();
     setupAutocomplete('rue_facturation', 'sugFacturation', 'facturation');
     setupAutocomplete('rue_batiment', 'sugBatiment', 'batiment');
     setupFormListeners();
