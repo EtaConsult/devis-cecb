@@ -11,8 +11,8 @@ const TARIFS = {
     km_factor_proche: 0.9,
     km_factor_loin: 0.7,
     km_seuil: 25,
-    surface_factor_petit: 0.6,
-    surface_factor_grand: 0.5,
+    surface_factor_petit: 0.7,
+    surface_factor_grand: 0.6,
     surface_seuil: 750,
     plus_factor_petit: 3.69,
     plus_factor_moyen: 2.29,
@@ -21,11 +21,15 @@ const TARIFS = {
     plus_seuil_grand: 750,
     plus_price_max: 1989,
     frais_emission_cecb: 80,
-    frais_maj_transfert_cecb: 30,
+    frais_emission_cecb_plus: 110,
+    frais_maj_transfert_cecb: 90,
+    frais_maj_cecb: 30,
+    demande_subvention_cecb_plus: 155,
+    conseil_restitution_cecb_plus: 155,
     prix_conseil_incitatif: 0,
     forfait_normal: 0,
-    forfait_express: 135,
-    forfait_urgent: 270,
+    forfait_express: 155,
+    forfait_urgent: 310,
     pct_acompte: 30
 };
 
@@ -33,29 +37,20 @@ const BEXIO_IDS = {
     user_id: 1,
     mwst_type: 0,
     currency_id: 1,
-    language_id: 4,
-    article_cecb: 4,
-    article_cecb_plus: 11,
-    article_frais_emission: 15,
-    article_forfait_execution: 12,
-    article_conseil_incitatif: 16,
-    tax_id: 16
+    language_id: 2,  // 1=DE, 2=FR, 3=IT, 4=EN
+    article_cecb: 1,            // Etablissement d'un certificat CECB
+    article_cecb_plus: 3,       // Etablissement d'un certificat CECB Plus, en sus
+    article_frais_emission: 10, // Frais d'emission du rapport CECB
+    article_forfait_execution: 12, // Prise de mesure (pas de plans)
+    tax_id: 16,                 // UN77 - Revenue 7.70%
+    unit_id: 3                   // 3 = forfait (ensemble)
 };
 
 const ETA_CONSULT_COORDS = { lat: 46.4571, lon: 6.3375 };
-const BEXIO_BASE_URL = 'https://api.bexio.com';
 
-// Proxy URL: si l'app tourne sur GitHub Pages, utiliser le proxy PythonAnywhere
-// Sinon (localhost), appeler Bexio directement
-const PROXY_URL = localStorage.getItem('proxy_url') || '';
-
+// Toutes les requetes Bexio passent par le proxy local (server.py)
 function getBexioUrl(endpoint) {
-    // endpoint commence par /2.0/...
-    if (PROXY_URL) {
-        // Proxy: /api/bexio/2.0/contact → PythonAnywhere relaie vers Bexio
-        return PROXY_URL + '/api/bexio' + endpoint;
-    }
-    return BEXIO_BASE_URL + endpoint;
+    return '/api/bexio' + endpoint;
 }
 
 // State
@@ -63,6 +58,7 @@ let buildingData = null;
 let searchTimeout = null;
 let currentView = 'form';
 let tempTarifs = null; // Tarifs temporaires (one-shot, en memoire uniquement)
+let cachedDistanceKm = 0; // Distance calculee via Google Maps
 const TARIF_HISTORY_KEY = 'devis_tarifs_history';
 
 // ==========================================
@@ -293,27 +289,47 @@ const TEXTS_KEY = 'devis-texts';
 const DEFAULT_TEXTS = {
     prestations_incluses_cecb: {
         label: 'Prestations incluses — CECB',
-        value: 'Prestations incluses :\n- Visite sur site et releves\n- Analyse documentaire\n- Calcul de la SRE\n- Analyse des surfaces d\'enveloppe\n- Estimation des valeurs U\n- Identification des ponts thermiques\n- Certification CECB pour l\'etat actuel'
+        value: 'Notre offre de services prévoit les prestations suivantes :<br><br>Etablissement d\'un CECB®<br>- Déplacement et visite du bâtiment pour relevés des indications nécessaires<br>- Analyse et compilation des documents reçus (factures, relevés de consommations, plans, …)<br>- Calcul et saisie de la SRE (selon affectations)<br>- Calcul, saisie et description des surfaces des éléments de l\'enveloppe (façades, vitrages, …)<br>- Estimation et saisie des coefficients de transmission thermique (valeurs U) des éléments de l\'enveloppe thermique de l\'état initial<br>- Identification et saisie des ponts thermiques de l\'état initial<br>- Estimation des surfaces de l\'enveloppe et de la surface de référence énergétique<br>- Plausibilité : Comparaison et affinage du calcul par rapport aux consommations réelles<br>- Etablissement du Certificat énergétique cantonal du bâtiment (CECB) pour l\'état actuel (pour une seule émission)<br><br>Données à fournir par le client<br>- Accès aux bâtiments (locaux communs et au moins un appartement)<br>- Plans du bâtiment en format PDF (vues en plan, coupes et élévations)<br>- Données de consommation du bâtiment sur les trois dernières années (chauffage et électricité)<br><br>La rémunération comprend tous les services fournis par Êta Consult Sàrl (y compris les dépenses et les frais de déplacement)<br><br>Si des services supplémentaires sont demandés au-delà de cette portée, les honoraires de Êta Consult Sàrl seront basés sur les taux horaires suivants :<br>- Chef de projet : 155 CHF HT (Catégorie C)<br><br>Les accès aux bâtiments sont à garantir en coordination avec nos disponibilités.'
+    },
+    prestations_non_incluses_cecb: {
+        label: 'Prestations non-incluses — CECB',
+        value: 'Prestations non-incluses :<br>- Rapport CECB® Plus<br>- Conseil Incitatif Chauffez Renouvelable®'
     },
     prestations_incluses_cecb_plus: {
         label: 'Prestations incluses — CECB Plus',
-        value: 'Prestations incluses :\n- Visite sur site et releves\n- Analyse documentaire\n- Calcul de la SRE\n- Analyse des surfaces d\'enveloppe\n- Estimation des valeurs U\n- Identification des ponts thermiques\n- Certification CECB pour l\'etat actuel\n- Rapport CECB Plus avec variantes de renovation chiffrees'
+        value: 'Notre offre de services prévoit les prestations suivantes :<br><br>Etablissement d\'un CECB®<br>- Déplacement et visite du bâtiment pour relevés des indications nécessaires<br>- Analyse et compilation des documents reçus (factures, relevés de consommations, plans, …)<br>- Calcul et saisie de la SRE (selon affectations)<br>- Calcul, saisie et description des surfaces des éléments de l\'enveloppe (façades, vitrages, …)<br>- Estimation et saisie des coefficients de transmission thermique (valeurs U) des éléments de l\'enveloppe thermique de l\'état initial<br>- Identification et saisie des ponts thermiques de l\'état initial<br>- Estimation des surfaces de l\'enveloppe et de la surface de référence énergétique<br>- Plausibilité : comparaison et affinage du calcul par rapport aux consommations réelles<br>- Etablissement du CECB® pour l\'état actuel (pour une seule émission)<br><br>Etablissement d\'un certificat CECB® Plus<br>- Prise de photos supplémentaires pour le rapport de conseil<br>- Établissement de 3 variantes d\'assainissement selon discussion avec le mandant<br>- Estimation des coefficients de transmission thermique (valeurs U) des éléments de l\'enveloppe thermique rénovée<br>- Estimation des subventions pour chaque variante de rénovation proposée<br><br>Données à fournir par le client<br>- Accès aux bâtiments (locaux communs et au moins un appartement)<br>- Plans du bâtiment en format PDF (vues en plan, coupes et élévations)<br>- Données de consommation du bâtiment sur les trois dernières années (chauffage et électricité)<br>La rémunération comprend tous les services fournis par Êta Consult Sàrl (y compris les dépenses et les frais de déplacement)<br><br>Si des services supplémentaires sont demandés au-delà de cette portée, les honoraires de Êta Consult Sàrl seront basés sur les taux horaires suivants :<br>- Chef de projet : 155 CHF HT (Catégorie C)<br>Les accès aux bâtiments sont à garantir en coordination avec nos disponibilités.'
+    },
+    prestations_non_incluses_cecb_plus: {
+        label: 'Prestations non-incluses — CECB Plus',
+        value: 'Prestations non-incluses :<br>- Conseil Incitatif Chauffez Renouvelable®'
+    },
+    prestations_incluses_transfert: {
+        label: 'Prestations incluses — Transfert CECB',
+        value: 'Notre offre de services prévoit les prestations suivantes :<br><br>Mise à jour d\'un CECB®<br>- Déplacement et visite du bâtiment pour relevés des indications nécessaires<br>- Estimation et saisie des coefficients de transmission thermique (valeurs U) des éléments de l\'enveloppe thermique de l\'état rénové<br>- Etablissement du Certificat énergétique cantonal du bâtiment (CECB) pour l\'état actuel (pour une seule émission)<br><br>Données à fournir par le client<br>- Accès aux bâtiments (locaux communs et au moins un appartement)<br>- Plans du bâtiment en format PDF (vues en plan, coupes et élévations)<br><br>La rémunération comprend tous les services fournis par Êta Consult Sàrl (y compris les dépenses et les frais de déplacement)<br><br>Si des services supplémentaires sont demandés au-delà de cette portée, les honoraires de Êta Consult Sàrl seront basés sur les taux horaires suivants :<br>- Chef de projet : 155 CHF HT (Catégorie C)<br><br>Les accès aux bâtiments sont à garantir en coordination avec nos disponibilités.'
+    },
+    prestations_non_incluses_transfert: {
+        label: 'Prestations non-incluses — Transfert CECB',
+        value: 'Prestations non-incluses :<br>- Rapport CECB® Plus<br>- Conseil Incitatif Chauffez Renouvelable®'
     },
     prestations_incluses_conseil: {
         label: 'Prestations incluses — Conseil Incitatif',
-        value: 'Prestations incluses :\n- Conseil personnalise sur les solutions de chauffage renouvelable\n- Visite sur site\n- Etablissement de la checklist Chauffez Renouvelable\n- Recommandations adaptees a votre batiment'
+        value: 'Prestations incluses :<br>- Conseil personnalisé sur les solutions de chauffage renouvelable<br>- Visite sur site<br>- Etablissement de la checklist Chauffez Renouvelable®<br>- Recommandations adaptées à votre bâtiment'
     },
     responsabilite_cecb: {
-        label: 'Clause de responsabilite CECB',
-        value: 'Informations importantes et clause de non-responsabilite :\nLes classes CECB sont basees sur une methode standardisee et simplifiee d\'estimation des besoins energetiques des batiments. La valeur determinee sert uniquement d\'indication a des fins de comparaison. Toute responsabilite decoulant des declarations du CECB est exclue (chapitre 11.1 du reglement d\'utilisation).'
+        label: 'Clause de responsabilité CECB',
+        value: '<strong>Informations importantes et clause de non-responsabilité :</strong><br><br>Les classes CECB sont basées sur une méthode standardisée et simplifiée d\'estimation des besoins énergétiques des bâtiments, appuyés sur des calculs types. La valeur déterminée ne doit pas être entendue comme une valeur absolue et sert uniquement d\'indication à des fins de comparaison avec d\'autres bâtiments.<br><br>Toute responsabilité découlant des déclarations du CECB est exclue. (chapitre 11.1 du règlement d\'utilisation).'
     },
     footer_conditions: {
         label: 'Footer — Conditions de paiement',
-        value: 'Conditions de paiement : Acompte de {pct_acompte}% a la commande, solde a reception du rapport.'
+        value: 'Conditions de paiement : Acompte de {pct_acompte}% à la commande, solde à réception du rapport.'
+    },
+    subventions_cecb_plus: {
+        label: 'Subventions — CECB Plus',
+        value: '<strong>Subventions cantonales (Canton de Vaud)</strong><br><br>Le Canton de Vaud propose une subvention aux propriétaires de bâtiments construits avant 2000 pour l\'établissement d\'un Certificat énergétique cantonal des bâtiments Plus (CECB Plus). Cette dernière n\'est pas intégrée à la présente offre d\'honoraires.<br><br>L\'aide financière est fixée selon les principes suivants :<br>- Habitat individuel: 1000 fr.<br>- Habitat collectif: 1500 fr.<br><br>Sont considérées comme habitations individuelles des constructions comprenant au maximum deux logements.<br><br><strong>IMPORTANT :</strong> La demande doit être impérativement remise avant le début de la prestation. Une subvention ne peut être accordée pour une prestation en cours (art. 24 loi du 17 novembre 1999 sur les subventions).'
     },
     footer_source: {
         label: 'Footer — Source',
-        value: 'Source : Devis CECB — Eta Consult Sarl'
+        value: 'Source : Devis CECB — Êta Consult Sàrl'
     }
 };
 
@@ -393,26 +409,16 @@ function addLog(msg, type = 'info') {
 // CONFIG PERSISTENCE
 // ==========================================
 function saveConfig() {
-    const token = document.getElementById('bexioToken').value;
     const gkey = document.getElementById('googleKey').value;
-    const proxy = document.getElementById('proxyUrl').value.replace(/\/+$/, ''); // trim trailing slashes
-    if (token) localStorage.setItem('bexio_token', token);
     if (gkey) localStorage.setItem('google_key', gkey);
-    localStorage.setItem('proxy_url', proxy);
     document.getElementById('configStatus').textContent = 'Sauvegarde !';
     setTimeout(() => document.getElementById('configStatus').textContent = '', 2000);
-    addLog('Configuration sauvegardee' + (proxy ? ' (proxy: ' + proxy + ')' : ' (appel direct)'), 'success');
-    // Recharger pour appliquer le changement de proxy
-    location.reload();
+    addLog('Configuration sauvegardee', 'success');
 }
 
 function loadConfig() {
-    const token = localStorage.getItem('bexio_token');
     const gkey = localStorage.getItem('google_key');
-    const proxy = localStorage.getItem('proxy_url');
-    if (token) document.getElementById('bexioToken').value = token;
     if (gkey) document.getElementById('googleKey').value = gkey;
-    if (proxy) document.getElementById('proxyUrl').value = proxy;
 }
 
 // ==========================================
@@ -433,7 +439,11 @@ const TARIF_LABELS = {
     plus_seuil_grand: { label: 'Seuil Plus grand', unit: 'm2' },
     plus_price_max: { label: 'Prix max CECB Plus', unit: 'CHF' },
     frais_emission_cecb: { label: 'Frais emission CECB', unit: 'CHF' },
-    frais_maj_transfert_cecb: { label: 'Frais MAJ apres transfert', unit: 'CHF' },
+    frais_emission_cecb_plus: { label: 'Frais emission CECB Plus', unit: 'CHF' },
+    frais_maj_transfert_cecb: { label: 'Transfert du CECB', unit: 'CHF' },
+    frais_maj_cecb: { label: 'Frais mise à jour CECB', unit: 'CHF' },
+    demande_subvention_cecb_plus: { label: 'Demande subvention IM 07', unit: 'CHF' },
+    conseil_restitution_cecb_plus: { label: 'Conseil restitution CECB Plus', unit: 'CHF/h' },
     prix_conseil_incitatif: { label: 'Prix Conseil Incitatif', unit: 'CHF' },
     forfait_normal: { label: 'Forfait Normal', unit: 'CHF' },
     forfait_express: { label: 'Forfait Express', unit: 'CHF' },
@@ -456,7 +466,8 @@ function renderTarifGrid() {
     if (!grid) return;
     grid.innerHTML = '';
 
-    for (const [key, val] of Object.entries(TARIFS)) {
+    const active = getActiveTarifs();
+    for (const [key, val] of Object.entries(active)) {
         const meta = TARIF_LABELS[key] || { label: key, unit: '' };
         const item = document.createElement('div');
         item.className = 'tarif-item';
@@ -467,6 +478,21 @@ function renderTarifGrid() {
         `;
         grid.appendChild(item);
     }
+
+    // Listener: modification → tarifs temporaires en live
+    grid.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('input', () => {
+            const newTarifs = {};
+            grid.querySelectorAll('input').forEach(i => {
+                const v = parseFloat(i.value);
+                if (!isNaN(v)) newTarifs[i.dataset.key] = v;
+            });
+            tempTarifs = Object.assign({}, TARIFS, newTarifs);
+            updatePricePreview();
+            const cancelBtn = document.getElementById('cancelTempTarifs');
+            if (cancelBtn) cancelBtn.style.display = '';
+        });
+    });
 }
 
 function getActiveTarifs() {
@@ -474,8 +500,7 @@ function getActiveTarifs() {
 }
 
 function saveTarifs() {
-    const isOneShot = document.getElementById('tarifOneShot') && document.getElementById('tarifOneShot').checked;
-    const oldTarifs = Object.assign({}, getActiveTarifs());
+    const oldTarifs = Object.assign({}, TARIFS);
 
     // Lire les nouvelles valeurs depuis le formulaire
     const newTarifs = {};
@@ -487,21 +512,16 @@ function saveTarifs() {
     });
 
     // Enregistrer dans l'historique
-    logTarifChange(isOneShot ? 'temporaire' : 'permanent', oldTarifs, newTarifs);
+    logTarifChange('permanent', oldTarifs, newTarifs);
 
-    if (isOneShot) {
-        // Mode temporaire : stocker en memoire uniquement
-        tempTarifs = Object.assign({}, TARIFS, newTarifs);
-        document.getElementById('tarifStatus').textContent = 'Tarifs temporaires appliques (prochain devis uniquement)';
-        addLog('Tarifs temporaires actifs (prochain devis uniquement)', 'success');
-    } else {
-        // Mode permanent : stocker dans localStorage
-        Object.assign(TARIFS, newTarifs);
-        localStorage.setItem('devis_tarifs', JSON.stringify(TARIFS));
-        tempTarifs = null;
-        document.getElementById('tarifStatus').textContent = 'Tarifs sauvegardes !';
-        addLog('Tarifs mis a jour (permanent)', 'success');
-    }
+    // Sauvegarde permanente dans localStorage
+    Object.assign(TARIFS, newTarifs);
+    localStorage.setItem('devis_tarifs', JSON.stringify(TARIFS));
+    tempTarifs = null;
+    const cancelBtn = document.getElementById('cancelTempTarifs');
+    if (cancelBtn) cancelBtn.style.display = 'none';
+    document.getElementById('tarifStatus').textContent = 'Tarifs sauvegardes !';
+    addLog('Tarifs mis a jour (permanent)', 'success');
 
     setTimeout(() => document.getElementById('tarifStatus').textContent = '', 3000);
     updatePricePreview();
@@ -522,11 +542,12 @@ function resetTarifs() {
     tempTarifs = null;
     Object.assign(TARIFS, {
         base_price: 500, km_factor_proche: 0.9, km_factor_loin: 0.7, km_seuil: 25,
-        surface_factor_petit: 0.6, surface_factor_grand: 0.5, surface_seuil: 750,
+        surface_factor_petit: 0.7, surface_factor_grand: 0.6, surface_seuil: 750,
         plus_factor_petit: 3.69, plus_factor_moyen: 2.29, plus_factor_grand: 1.79,
         plus_seuil_petit: 160, plus_seuil_grand: 750, plus_price_max: 1989,
-        frais_emission_cecb: 80, frais_maj_transfert_cecb: 30, prix_conseil_incitatif: 0,
-        forfait_normal: 0, forfait_express: 135, forfait_urgent: 270, pct_acompte: 30
+        frais_emission_cecb: 80, frais_emission_cecb_plus: 110, frais_maj_transfert_cecb: 90,
+        demande_subvention_cecb_plus: 155, conseil_restitution_cecb_plus: 155, prix_conseil_incitatif: 0,
+        forfait_normal: 0, forfait_express: 155, forfait_urgent: 310, pct_acompte: 30
     });
     renderTarifGrid();
     updatePricePreview();
@@ -583,23 +604,31 @@ function renderTarifHistory() {
     }
 
     let html = '<table class="history-table" style="font-size:12px"><thead><tr>';
-    html += '<th>Date</th><th>Utilisateur</th><th>Type</th><th>Modifications</th>';
+    html += '<th>Date</th><th>Type</th><th>Modifications</th><th></th>';
     html += '</tr></thead><tbody>';
 
-    history.slice(0, 20).forEach(entry => {
+    history.slice(0, 20).forEach((entry, idx) => {
         const date = new Date(entry.date).toLocaleDateString('fr-CH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
         const badgeClass = entry.type === 'temporaire' ? 'badge-sm badge-conseil' : 'badge-sm badge-cecb';
-        const changesHtml = entry.changes.map(c => `${c.label}: ${c.old} → ${c.new} ${c.unit || ''}`).join('<br>');
+        const changesHtml = entry.changes.map(c => `${c.label}: ${c.old} -> ${c.new} ${c.unit || ''}`).join('<br>');
         html += `<tr>`;
         html += `<td>${date}</td>`;
-        html += `<td>${escapeHtml(entry.user)}</td>`;
         html += `<td><span class="${badgeClass}">${entry.type}</span></td>`;
         html += `<td>${changesHtml}</td>`;
+        html += `<td><button onclick="deleteTarifHistoryEntry(${idx})" style="background:none;border:none;color:#DC2626;cursor:pointer;font-size:14px" title="Supprimer">✕</button></td>`;
         html += `</tr>`;
     });
 
     html += '</tbody></table>';
     el.innerHTML = html;
+}
+
+function deleteTarifHistoryEntry(idx) {
+    let history = [];
+    try { history = JSON.parse(localStorage.getItem(TARIF_HISTORY_KEY)) || []; } catch (e) { /* ignore */ }
+    history.splice(idx, 1);
+    localStorage.setItem(TARIF_HISTORY_KEY, JSON.stringify(history));
+    renderTarifHistory();
 }
 
 // ==========================================
@@ -751,6 +780,9 @@ async function fetchBuildingData(street, npa, city, easting, northing) {
         addLog(`RegBL: EGID ${buildingData.egid}, ${buildingData.gastw} etages, ${buildingData.garea} m2`, 'success');
         updateBuildingDisplay(buildingData);
         updatePricePreview();
+
+        // Calculer la distance via Google Maps (async, met a jour le preview)
+        fetchDistance(street, npa, city);
     } catch (err) {
         addLog(`Erreur RegBL: ${err.message}`, 'error');
     }
@@ -773,6 +805,30 @@ function updateBuildingDisplay(data) {
             <div class="building-item"><span class="building-label">Parcelle</span><span class="building-value">${data.lparz}</span></div>
         </div>
     `;
+}
+
+// ==========================================
+// GOOGLE MAPS DISTANCE
+// ==========================================
+async function fetchDistance(street, npa, city) {
+    const destination = `${street}, ${npa} ${city}, Suisse`;
+    const origin = 'Route de l\'Hôpital 16b, 1180 Rolle, Suisse';
+
+    try {
+        const params = new URLSearchParams({ origins: origin, destinations: destination });
+        const res = await fetch(`/api/distance?${params}`);
+        const data = await res.json();
+
+        if (data.distance_km !== undefined) {
+            cachedDistanceKm = data.distance_km;
+            addLog(`Distance Google Maps: ${cachedDistanceKm} km (${data.duration || ''})`, 'success');
+            updatePricePreview();
+        } else {
+            addLog(`Distance non disponible: ${data.error || 'erreur inconnue'}`, 'warning');
+        }
+    } catch (err) {
+        addLog(`Erreur calcul distance: ${err.message}`, 'warning');
+    }
 }
 
 // ==========================================
@@ -812,8 +868,8 @@ function calculatePricing() {
     const etEq = gastw + getCoefficient(sousSol) + getCoefficient(combles);
     const sEq = etEq * garea;
 
-    // Distance (0 by default without Google API)
-    const distKm = 0;
+    // Distance Google Maps (mise a jour async via fetchDistance)
+    const distKm = cachedDistanceKm;
 
     // CECB price
     const kmFactor = distKm < t.km_seuil ? t.km_factor_proche : t.km_factor_loin;
@@ -821,11 +877,70 @@ function calculatePricing() {
     const cecbPrice = Math.round(t.base_price + (distKm * kmFactor) + (sEq * surfFactor));
 
     const lines = [];
+    const isTransfert = type === 'Transfert CECB';
+    const isPlusTransfert = type === 'CECB Plus Transfert';
+
+    // CECB Plus avec transfert
+    if (isPlusTransfert) {
+        const rabaisEl = document.getElementById('rabais_transfert');
+        const rabaisPct = rabaisEl ? (parseFloat(rabaisEl.value) || 0) : 0;
+        const prixReduit = Math.round(cecbPrice * (1 - rabaisPct / 100));
+        lines.push({ label: `Transfert CECB (Seq: ${Math.round(sEq)} m2, -${rabaisPct}%)`, value: `${prixReduit} CHF` });
+        lines.push({ label: 'Transfert du CECB', value: `${t.frais_maj_transfert_cecb} CHF` });
+        lines.push({ label: 'Frais de mise à jour CECB', value: `${t.frais_maj_cecb} CHF` });
+        let total = prixReduit + t.frais_maj_transfert_cecb + t.frais_maj_cecb;
+
+        // Plus basé sur cecbPrice brut (avant rabais)
+        let plusFactor;
+        if (sEq < t.plus_seuil_petit) plusFactor = t.plus_factor_petit;
+        else if (sEq < t.plus_seuil_grand) plusFactor = t.plus_factor_moyen;
+        else plusFactor = t.plus_factor_grand;
+
+        const plusPrice = Math.min(t.plus_price_max, Math.round(cecbPrice * plusFactor));
+        lines.push({ label: `CECB Plus (x${plusFactor})`, value: `${plusPrice} CHF` });
+        total += plusPrice;
+
+        lines.push({ label: 'Frais emission CECB Plus', value: `${t.frais_emission_cecb_plus} CHF` });
+        total += t.frais_emission_cecb_plus;
+
+        const subvEl = document.getElementById('inclure_subvention');
+        if (subvEl && subvEl.checked) {
+            lines.push({ label: 'Demande subvention IM-07', value: `${t.demande_subvention_cecb_plus} CHF` });
+            total += t.demande_subvention_cecb_plus;
+        }
+
+        const conseilPrice = 1.5 * t.conseil_restitution_cecb_plus;
+        lines.push({ label: 'Conseil restitution (1.5h)', value: `${conseilPrice} CHF` });
+        total += conseilPrice;
+
+        const forfait = getForfaitExecution(delai);
+        if (forfait > 0) {
+            lines.push({ label: `Forfait ${delai.split('(')[0].trim()}`, value: `${forfait} CHF` });
+            total += forfait;
+        }
+        return { type, total, lines };
+    }
+
+    if (isTransfert) {
+        const rabaisEl = document.getElementById('rabais_transfert');
+        const rabaisPct = rabaisEl ? (parseFloat(rabaisEl.value) || 0) : 0;
+        const prixReduit = Math.round(cecbPrice * (1 - rabaisPct / 100));
+        lines.push({ label: `Transfert CECB (Seq: ${Math.round(sEq)} m2, -${rabaisPct}%)`, value: `${prixReduit} CHF` });
+        lines.push({ label: 'Transfert du CECB', value: `${t.frais_maj_transfert_cecb} CHF` });
+        let total = prixReduit + t.frais_maj_transfert_cecb;
+
+        const forfait = getForfaitExecution(delai);
+        if (forfait > 0) {
+            lines.push({ label: `Forfait ${delai.split('(')[0].trim()}`, value: `${forfait} CHF` });
+            total += forfait;
+        }
+        return { type, total, lines };
+    }
+
     lines.push({ label: `CECB (Seq: ${Math.round(sEq)} m2)`, value: `${cecbPrice} CHF` });
     lines.push({ label: 'Frais emission CECB', value: `${t.frais_emission_cecb} CHF` });
-    lines.push({ label: 'Mise a jour apres transfert', value: `${t.frais_maj_transfert_cecb} CHF` });
 
-    let total = cecbPrice + t.frais_emission_cecb + t.frais_maj_transfert_cecb;
+    let total = cecbPrice + t.frais_emission_cecb;
 
     // CECB Plus
     if (type === 'CECB Plus') {
@@ -837,6 +952,22 @@ function calculatePricing() {
         const plusPrice = Math.min(t.plus_price_max, Math.round(cecbPrice * plusFactor));
         lines.push({ label: `CECB Plus (x${plusFactor})`, value: `${plusPrice} CHF` });
         total += plusPrice;
+
+        // Frais emission CECB Plus
+        lines.push({ label: 'Frais emission CECB Plus', value: `${t.frais_emission_cecb_plus} CHF` });
+        total += t.frais_emission_cecb_plus;
+
+        // Subvention IM-07
+        const subvEl = document.getElementById('inclure_subvention');
+        if (subvEl && subvEl.checked) {
+            lines.push({ label: 'Demande subvention IM-07', value: `${t.demande_subvention_cecb_plus} CHF` });
+            total += t.demande_subvention_cecb_plus;
+        }
+
+        // Conseil restitution
+        const conseilPrice = 1.5 * t.conseil_restitution_cecb_plus;
+        lines.push({ label: 'Conseil restitution (1.5h)', value: `${conseilPrice} CHF` });
+        total += conseilPrice;
     }
 
     // Forfait execution
@@ -887,8 +1018,6 @@ function updatePricePreview() {
 // ==========================================
 async function bexioRequest(method, endpoint, body = null) {
     const url = getBexioUrl(endpoint);
-    const useProxy = !!PROXY_URL;
-
     const opts = {
         method,
         headers: {
@@ -896,16 +1025,6 @@ async function bexioRequest(method, endpoint, body = null) {
             'Content-Type': 'application/json'
         }
     };
-
-    // Si pas de proxy, ajouter le token Bearer (appel direct)
-    if (!useProxy) {
-        const token = localStorage.getItem('bexio_token');
-        if (!token) throw new Error('Token Bexio manquant. Configurez-le dans Configuration.');
-        opts.headers['Authorization'] = `Bearer ${token}`;
-    } else {
-        // Via proxy: inclure credentials pour la session Flask
-        opts.credentials = 'include';
-    }
 
     if (body) opts.body = JSON.stringify(body);
 
@@ -927,20 +1046,31 @@ async function searchContact(name) {
 function buildContactPayload(formData) {
     const isPrive = formData.type_contact === 'Prive';
     const payload = {
-        contact_type_id: isPrive ? 1 : 2,
+        contact_type_id: isPrive ? 2 : 1,  // Bexio: 1=Firma, 2=Privat
         name_1: isPrive ? formData.nom_famille : formData.nom_entreprise,
         name_2: isPrive ? formData.prenom : '',
-        address: formData.rue_facturation,
         postcode: formData.npa_facturation,
         city: formData.localite_facturation,
         country_id: 1, // Switzerland
         mail: formData.email,
         phone_fixed: formData.telephone || '',
         user_id: BEXIO_IDS.user_id,
-        owner_id: BEXIO_IDS.user_id
+        owner_id: BEXIO_IDS.user_id,
+        language_id: BEXIO_IDS.language_id
     };
 
-    const salutMap = { 'Mme': 1, 'M.': 2 };
+    // Bexio v2: "address" est en lecture seule, utiliser street_name + house_number
+    if (formData.rue_facturation) {
+        const parts = formData.rue_facturation.match(/^(.+?)\s+(\d+\s*\w*)$/);
+        if (parts) {
+            payload.street_name = parts[1];
+            payload.house_number = parts[2];
+        } else {
+            payload.street_name = formData.rue_facturation;
+        }
+    }
+
+    const salutMap = { 'M.': 1, 'Mme': 2 };  // Bexio: 1=Herr, 2=Frau
     if (salutMap[formData.appellation]) {
         payload.salutation_id = salutMap[formData.appellation];
     }
@@ -953,8 +1083,7 @@ async function createContact(formData) {
 }
 
 async function updateContact(contactId, formData) {
-    const payload = buildContactPayload(formData);
-    return bexioRequest('POST', `/2.0/contact/${contactId}`, payload);
+    return bexioRequest('POST', `/2.0/contact/${contactId}`, buildContactPayload(formData));
 }
 
 async function createBexioQuote(formData, contactId) {
@@ -962,17 +1091,21 @@ async function createBexioQuote(formData, contactId) {
     const adresse = formData.rue_batiment || formData.rue_facturation;
     const npa = formData.npa_batiment || formData.npa_facturation;
     const loc = formData.localite_batiment || formData.localite_facturation;
-    const title = `${type} - ${adresse}, ${npa}, ${loc}`;
+    const displayType = type === 'CECB Plus Transfert' ? 'CECB Plus (transfert)' : type;
+    const title = `${displayType} - ${adresse}, ${npa}, ${loc}`;
 
     const positions = buildPositions(formData, type);
     const footerCond = getText('footer_conditions').replace('{pct_acompte}', TARIFS.pct_acompte);
     const footerSrc = getText('footer_source');
     const footer = footerCond + '<br><br>' + footerSrc;
 
+    const header = (formData.message || '').trim().replace(/\n/g, '<br>') || '\u00A0';  // Espace insecable pour eviter le template Bexio par defaut
+
     const payload = {
         contact_id: contactId,
         user_id: BEXIO_IDS.user_id,
         title,
+        header,
         mwst_type: BEXIO_IDS.mwst_type,
         currency_id: BEXIO_IDS.currency_id,
         language_id: BEXIO_IDS.language_id,
@@ -993,60 +1126,185 @@ function buildPositions(formData, type) {
     if (type === 'Conseil Incitatif') {
         // Conseil Incitatif position
         positions.push({
-            type: 'KbPositionArticle',
-            article_id: BEXIO_IDS.article_conseil_incitatif,
+            type: 'KbPositionCustom',
             amount: '1',
-            unit_price: '0',
+            unit_price: String(TARIFS.prix_conseil_incitatif),
+            unit_id: BEXIO_IDS.unit_id,
             tax_id: BEXIO_IDS.tax_id,
-            text: `Conseil incitatif Chauffez renouvelable:\n- EGID n${bd.egid || '—'}\n- ${adresse}, ${npa} ${loc}`
+            text: `Conseil incitatif Chauffez renouvelable® :<br>- EGID n°${bd.egid || '—'}<br>- ${adresse}, ${npa} ${loc}`
         });
         // Prestations text
         positions.push({
             type: 'KbPositionText',
             text: getText('prestations_incluses_conseil')
         });
-        // Message du prospect (si fourni)
-        const msgCI = (formData.message || '').trim();
-        if (msgCI) {
-            positions.push({
-                type: 'KbPositionText',
-                text: `Message :\n${msgCI}`
-            });
-        }
+        // Message du prospect → va dans le header du devis
         return positions;
     }
 
-    // CECB position
+    // Main position
     const pricing = calculatePricing();
-    const cecbPrice = pricing.lines[0] ? parseInt(pricing.lines[0].value) || 0 : 0;
+    const mainPrice = pricing.lines[0] ? parseInt(pricing.lines[0].value) || 0 : 0;
+    const isTransfert = type === 'Transfert CECB';
+    const isPlusTransfert = type === 'CECB Plus Transfert';
+    const buildingDesc = `- EGID n°${bd.egid || '—'}<br>- ${adresse}, ${npa} ${loc}<br>- ${bd.gastw || 2} niveaux hors sol<br>- Surface au sol ${bd.garea || '?'} m²<br>- Année de construction : ${bd.gbauj || '?'}`;
+
+    // CECB Plus avec transfert
+    if (isPlusTransfert) {
+        const t = getActiveTarifs();
+
+        // Transfert du CECB (avant la position principale)
+        positions.push({
+            type: 'KbPositionCustom',
+            amount: '1',
+            unit_price: String(t.frais_maj_transfert_cecb),
+            unit_id: BEXIO_IDS.unit_id,
+            tax_id: BEXIO_IDS.tax_id,
+            text: 'Transfert du CECB'
+        });
+
+        // Mise à jour CECB (prix reduit)
+        positions.push({
+            type: 'KbPositionArticle',
+            article_id: 4,  // Mise a jour CECB
+            amount: '1',
+            unit_price: String(mainPrice),
+            tax_id: BEXIO_IDS.tax_id,
+            text: `Mise à jour du certificat CECB® :<br>${buildingDesc}`
+        });
+
+        // Frais de mise à jour CECB
+        positions.push({
+            type: 'KbPositionCustom',
+            amount: '1',
+            unit_price: String(t.frais_maj_cecb),
+            unit_id: BEXIO_IDS.unit_id,
+            tax_id: BEXIO_IDS.tax_id,
+            text: 'Frais de mise à jour du CECB sur la plateforme CECB (nouveaux tarifs à partir du 01.01.2026)'
+        });
+
+        // CECB Plus (prix basé sur cecbPrice brut)
+        const plusLine = pricing.lines.find(l => l.label.includes('Plus'));
+        const plusPrice = plusLine ? parseInt(plusLine.value) || 0 : 0;
+        positions.push({
+            type: 'KbPositionArticle',
+            article_id: BEXIO_IDS.article_cecb_plus,
+            amount: '1',
+            unit_price: String(plusPrice),
+            tax_id: BEXIO_IDS.tax_id,
+            text: `Etablissement d'un certificat CECB® Plus, en sus :<br>- ${adresse}, ${npa} ${loc}`
+        });
+
+        // Frais emission CECB Plus
+        positions.push({
+            type: 'KbPositionCustom',
+            amount: '1',
+            unit_price: String(t.frais_emission_cecb_plus),
+            unit_id: BEXIO_IDS.unit_id,
+            tax_id: BEXIO_IDS.tax_id,
+            text: 'Frais d\'émission du rapport CECB Plus sur la plateforme (nouveaux tarifs à partir du 01.01.2026)'
+        });
+
+        // Subventions info text
+        positions.push({
+            type: 'KbPositionText',
+            text: getText('subventions_cecb_plus')
+        });
+
+        // Demande de subvention IM-07
+        const subvEl = document.getElementById('inclure_subvention');
+        if (subvEl && subvEl.checked) {
+            positions.push({
+                type: 'KbPositionCustom',
+                amount: '1',
+                unit_price: String(t.demande_subvention_cecb_plus),
+                unit_id: BEXIO_IDS.unit_id,
+                tax_id: BEXIO_IDS.tax_id,
+                text: 'Demande de subvention par l\'expert CECB selon les conditions d\'éligibilité du Programme des Bâtiments :<br>- Mesure IM-07: Etablissement d\'un CECB®Plus'
+            });
+        }
+
+        // Conseil et restitution du rapport CECB Plus
+        positions.push({
+            type: 'KbPositionCustom',
+            amount: '1.5',
+            unit_price: String(t.conseil_restitution_cecb_plus),
+            unit_id: 1,  // heures
+            tax_id: BEXIO_IDS.tax_id,
+            text: 'Conseils à la restitution du rapport CECB®Plus<br>- Lecture commentée du rapport de conseil'
+        });
+
+        // Forfait execution
+        const forfait = getForfaitExecution(formData.delai || 'Normal');
+        if (forfait > 0) {
+            positions.push({
+                type: 'KbPositionArticle',
+                article_id: BEXIO_IDS.article_forfait_execution,
+                amount: '1',
+                unit_price: String(forfait),
+                tax_id: BEXIO_IDS.tax_id,
+                text: `Forfait relatif au délai d'exécution :<br>- Normal > 10 jours ouvrés, à convenir : 0.- HT<br>- Express < 5 jours ouvrés : 155.- HT<br>- Urgent < 48h : 310.- HT`
+            });
+        }
+
+        // Prestations incluses
+        positions.push({
+            type: 'KbPositionText',
+            text: getText('prestations_incluses_cecb_plus')
+        });
+
+        // Prestations non-incluses
+        const nonIncluses = getText('prestations_non_incluses_cecb_plus');
+        if (nonIncluses) {
+            positions.push({
+                type: 'KbPositionText',
+                text: nonIncluses
+            });
+        }
+
+        // Responsabilite
+        positions.push({
+            type: 'KbPositionText',
+            text: getText('responsabilite_cecb')
+        });
+
+        return positions;
+    }
+
+    // Transfert du CECB — avant la position principale pour Transfert CECB
+    if (isTransfert) {
+        positions.push({
+            type: 'KbPositionCustom',
+            amount: '1',
+            unit_price: String(getActiveTarifs().frais_maj_transfert_cecb),
+            unit_id: BEXIO_IDS.unit_id,
+            tax_id: BEXIO_IDS.tax_id,
+            text: 'Transfert du CECB'
+        });
+    }
 
     positions.push({
         type: 'KbPositionArticle',
-        article_id: BEXIO_IDS.article_cecb,
+        article_id: isTransfert ? 4 : BEXIO_IDS.article_cecb,  // 4 = Mise a jour CECB
         amount: '1',
-        unit_price: String(cecbPrice),
+        unit_price: String(mainPrice),
         tax_id: BEXIO_IDS.tax_id,
-        text: `Etablissement d'un certificat CECB:\n- EGID n${bd.egid || '—'}\n- ${adresse}, ${npa} ${loc}\n- ${bd.gastw || 2} niveaux hors sol\n- Surface au sol ${bd.garea || '?'} m2\n- Annee de construction : ${bd.gbauj || '?'}`
+        text: isTransfert
+            ? `Mise à jour du certificat CECB® :<br>${buildingDesc}`
+            : `Etablissement d'un certificat CECB® :<br>${buildingDesc}`
     });
 
-    // Frais emission
-    positions.push({
-        type: 'KbPositionArticle',
-        article_id: BEXIO_IDS.article_frais_emission,
-        amount: '1',
-        unit_price: String(TARIFS.frais_emission_cecb),
-        tax_id: BEXIO_IDS.tax_id,
-        text: 'Frais d\'emission du rapport CECB sur la plateforme (tarifs 2026)'
-    });
-
-    // Frais mise a jour apres transfert
-    positions.push({
-        type: 'KbPositionCustom',
-        amount: '1',
-        unit_price: String(TARIFS.frais_maj_transfert_cecb),
-        tax_id: BEXIO_IDS.tax_id,
-        text: 'Frais de mise a jour du CECB apres transfert'
-    });
+    // Frais emission — pas pour Transfert CECB
+    if (!isTransfert) {
+        positions.push({
+            type: 'KbPositionArticle',
+            article_id: BEXIO_IDS.article_frais_emission,
+            amount: '1',
+            unit_price: String(getActiveTarifs().frais_emission_cecb),
+            tax_id: BEXIO_IDS.tax_id,
+            text: 'Frais d\'émission du rapport CECB sur la plateforme (nouveaux tarifs à partir du 01.01.2026)'
+        });
+    }
 
     // CECB Plus
     if (type === 'CECB Plus') {
@@ -1059,7 +1317,46 @@ function buildPositions(formData, type) {
             amount: '1',
             unit_price: String(plusPrice),
             tax_id: BEXIO_IDS.tax_id,
-            text: `Etablissement d'un certificat CECB Plus, en sus:\n- ${adresse}, ${npa} ${loc}`
+            text: `Etablissement d'un certificat CECB® Plus, en sus :<br>- ${adresse}, ${npa} ${loc}`
+        });
+
+        // Frais emission CECB Plus
+        positions.push({
+            type: 'KbPositionCustom',
+            amount: '1',
+            unit_price: String(getActiveTarifs().frais_emission_cecb_plus),
+            unit_id: BEXIO_IDS.unit_id,
+            tax_id: BEXIO_IDS.tax_id,
+            text: 'Frais d\'émission du rapport CECB Plus sur la plateforme (nouveaux tarifs à partir du 01.01.2026)'
+        });
+
+        // Subventions info text
+        positions.push({
+            type: 'KbPositionText',
+            text: getText('subventions_cecb_plus')
+        });
+
+        // Demande de subvention IM-07
+        const subvEl = document.getElementById('inclure_subvention');
+        if (subvEl && subvEl.checked) {
+            positions.push({
+                type: 'KbPositionCustom',
+                amount: '1',
+                unit_price: String(getActiveTarifs().demande_subvention_cecb_plus),
+                unit_id: BEXIO_IDS.unit_id,
+                tax_id: BEXIO_IDS.tax_id,
+                text: 'Demande de subvention par l\'expert CECB selon les conditions d\'éligibilité du Programme des Bâtiments :<br>- Mesure IM-07: Etablissement d\'un CECB®Plus'
+            });
+        }
+
+        // Conseil et restitution du rapport CECB Plus
+        positions.push({
+            type: 'KbPositionCustom',
+            amount: '1.5',
+            unit_price: String(getActiveTarifs().conseil_restitution_cecb_plus),
+            unit_id: 1,  // heures
+            tax_id: BEXIO_IDS.tax_id,
+            text: 'Conseils à la restitution du rapport CECB®Plus<br>- Lecture commentée du rapport de conseil'
         });
     }
 
@@ -1073,16 +1370,28 @@ function buildPositions(formData, type) {
             amount: '1',
             unit_price: String(forfait),
             tax_id: BEXIO_IDS.tax_id,
-            text: `Forfait execution ${delaiLabel}`
+            text: `Forfait relatif au délai d'exécution :<br>- Normal > 10 jours ouvrés, à convenir : 0.- HT<br>- Express < 5 jours ouvrés : 155.- HT<br>- Urgent < 48h : 310.- HT`
         });
     }
 
-    // Prestations text
-    const prestationsKey = type === 'CECB Plus' ? 'prestations_incluses_cecb_plus' : 'prestations_incluses_cecb';
+    // Prestations incluses
+    const prestationsKey = isTransfert ? 'prestations_incluses_transfert'
+        : type === 'CECB Plus' ? 'prestations_incluses_cecb_plus' : 'prestations_incluses_cecb';
     positions.push({
         type: 'KbPositionText',
         text: getText(prestationsKey)
     });
+
+    // Prestations non-incluses
+    const nonInclusesKey = isTransfert ? 'prestations_non_incluses_transfert'
+        : type === 'CECB Plus' ? 'prestations_non_incluses_cecb_plus' : 'prestations_non_incluses_cecb';
+    const nonIncluses = getText(nonInclusesKey);
+    if (nonIncluses) {
+        positions.push({
+            type: 'KbPositionText',
+            text: nonIncluses
+        });
+    }
 
     // Responsabilite text
     positions.push({
@@ -1090,14 +1399,7 @@ function buildPositions(formData, type) {
         text: getText('responsabilite_cecb')
     });
 
-    // Message du prospect (si fourni)
-    const message = (formData.message || '').trim();
-    if (message) {
-        positions.push({
-            type: 'KbPositionText',
-            text: `Message :\n${message}`
-        });
-    }
+    // Message du prospect → va dans le header du devis (pas en position)
 
     return positions;
 }
@@ -1232,16 +1534,36 @@ function setupFormListeners() {
         }
     });
 
-    // Certificate type → toggle delai
+    // Certificate type → toggle delai + rabais + subvention
     document.getElementById('type_certificat').addEventListener('change', function () {
         const delaiGrp = document.getElementById('group_delai');
+        const rabaisGrp = document.getElementById('rabaisGroup');
+        const subvGrp = document.getElementById('subventionGroup');
         if (this.value === 'Conseil Incitatif') {
             delaiGrp.classList.add('hidden');
         } else {
             delaiGrp.classList.remove('hidden');
         }
+        if (rabaisGrp) {
+            rabaisGrp.style.display = (this.value === 'Transfert CECB' || this.value === 'CECB Plus Transfert') ? '' : 'none';
+        }
+        if (subvGrp) {
+            subvGrp.style.display = (this.value === 'CECB Plus' || this.value === 'CECB Plus Transfert') ? '' : 'none';
+        }
         updatePricePreview();
     });
+
+    // Rabais input → update price
+    const rabaisInput = document.getElementById('rabais_transfert');
+    if (rabaisInput) {
+        rabaisInput.addEventListener('input', updatePricePreview);
+    }
+
+    // Subvention checkbox → update price
+    const subvInput = document.getElementById('inclure_subvention');
+    if (subvInput) {
+        subvInput.addEventListener('change', updatePricePreview);
+    }
 
     // Price-affecting fields
     ['nombre_etages', 'sous_sol', 'combles', 'delai', 'type_certificat'].forEach(id => {
@@ -1256,6 +1578,7 @@ function setupFormListeners() {
 function resetForm() {
     document.getElementById('devisForm').reset();
     buildingData = null;
+    cachedDistanceKm = 0;
     document.getElementById('buildingData').innerHTML = '<div class="price-placeholder">En attente de l\'adresse du batiment...</div>';
     document.getElementById('pricePreview').innerHTML = '<div class="price-placeholder">Remplissez le formulaire pour voir l\'apercu...</div>';
     document.getElementById('adresse_batiment_fields').classList.remove('hidden');
@@ -1302,6 +1625,15 @@ window.addEventListener('DOMContentLoaded', () => {
             e.preventDefault();
             switchView(a.dataset.view);
         });
+    });
+
+    // Health check — verifier que le serveur proxy est actif
+    fetch('/api/health').then(r => r.json()).then(d => {
+        if (d.status === 'ok') {
+            addLog('Serveur proxy connecte' + (d.bexio_token ? ' (token Bexio OK)' : ' (ATTENTION: token Bexio manquant)'), d.bexio_token ? 'success' : 'error');
+        }
+    }).catch(() => {
+        addLog('ERREUR: Le serveur local ne repond pas. Verifiez que server.py est lance.', 'error');
     });
 
     addLog('Application initialisee', 'success');
