@@ -810,25 +810,38 @@ function updateBuildingDisplay(data) {
 // ==========================================
 // GOOGLE MAPS DISTANCE
 // ==========================================
-async function fetchDistance(street, npa, city) {
+let distanceFetchFailed = false; // true si la distance n'a pas pu être récupérée
+
+async function fetchDistance(street, npa, city, retries = 2) {
     const destination = `${street}, ${npa} ${city}, Suisse`;
     const origin = 'Route de l\'Hôpital 16b, 1180 Rolle, Suisse';
+    const params = new URLSearchParams({ origins: origin, destinations: destination });
 
-    try {
-        const params = new URLSearchParams({ origins: origin, destinations: destination });
-        const res = await fetch(`/api/distance?${params}`);
-        const data = await res.json();
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            if (attempt > 0) {
+                addLog(`Retry distance (${attempt}/${retries})...`, 'info');
+                await new Promise(r => setTimeout(r, 1000 * attempt));
+            }
+            const res = await fetch(`/api/distance?${params}`);
+            const data = await res.json();
 
-        if (data.distance_km !== undefined) {
-            cachedDistanceKm = data.distance_km;
-            addLog(`Distance Google Maps: ${cachedDistanceKm} km (${data.duration || ''})`, 'success');
-            updatePricePreview();
-        } else {
-            addLog(`Distance non disponible: ${data.error || 'erreur inconnue'}`, 'warning');
+            if (data.distance_km !== undefined) {
+                cachedDistanceKm = data.distance_km;
+                distanceFetchFailed = false;
+                addLog(`Distance Google Maps: ${cachedDistanceKm} km (${data.duration || ''})`, 'success');
+                updatePricePreview();
+                return;
+            } else {
+                addLog(`Distance non disponible: ${data.error || 'erreur inconnue'}`, 'warning');
+            }
+        } catch (err) {
+            if (attempt < retries) continue;
+            addLog(`Erreur calcul distance: ${err.message}`, 'warning');
         }
-    } catch (err) {
-        addLog(`Erreur calcul distance: ${err.message}`, 'warning');
     }
+    distanceFetchFailed = true;
+    updatePricePreview();
 }
 
 // ==========================================
@@ -1008,6 +1021,9 @@ function updatePricePreview() {
 
     if (!buildingData || !buildingData.garea) {
         html += `<div style="margin-top:8px;font-size:12px;color:#D97706">Surface inconnue — prix indicatif (base uniquement)</div>`;
+    }
+    if (distanceFetchFailed || (buildingData && cachedDistanceKm === 0)) {
+        html += `<div style="margin-top:8px;font-size:12px;color:#DC2626">&#9888; Distance non disponible — prix sans frais de deplacement</div>`;
     }
 
     el.innerHTML = html;
@@ -1426,6 +1442,15 @@ async function handleSubmit(e) {
         data.localite_batiment = data.localite_facturation;
     }
 
+    // Avertir si la distance n'a pas été récupérée
+    if (data.type_certificat !== 'Conseil Incitatif' && (distanceFetchFailed || cachedDistanceKm === 0)) {
+        if (!confirm('La distance n\'a pas pu être calculée. Le prix ne comprend pas les frais de déplacement.\n\nCréer le devis quand même ?')) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Creer le devis dans Bexio';
+            return;
+        }
+    }
+
     addLog(`Creation: ${data.type_certificat} pour ${data.prenom} ${data.nom_famille}`, 'info');
 
     try {
@@ -1579,6 +1604,7 @@ function resetForm() {
     document.getElementById('devisForm').reset();
     buildingData = null;
     cachedDistanceKm = 0;
+    distanceFetchFailed = false;
     document.getElementById('buildingData').innerHTML = '<div class="price-placeholder">En attente de l\'adresse du batiment...</div>';
     document.getElementById('pricePreview').innerHTML = '<div class="price-placeholder">Remplissez le formulaire pour voir l\'apercu...</div>';
     document.getElementById('adresse_batiment_fields').classList.remove('hidden');
