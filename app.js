@@ -1018,9 +1018,9 @@ function updatePricePreview() {
         html += `<div class="price-line"><span class="price-label">${l.label}</span><span class="price-value">${l.value}</span></div>`;
     });
     html += `<div class="price-total"><span>Total HT</span><span>${pricing.total} CHF</span></div>`;
-    const tva = Math.round(pricing.total * 7.7) / 100;
+    const tva = Math.round(pricing.total * 8.1) / 100;
     const ttc = Math.round((pricing.total + tva) * 100) / 100;
-    html += `<div class="price-line" style="font-size:12px;color:#64748B;margin-top:2px"><span class="price-label">TVA 7.7%</span><span class="price-value">${tva.toFixed(2)} CHF</span></div>`;
+    html += `<div class="price-line" style="font-size:12px;color:#64748B;margin-top:2px"><span class="price-label">TVA 8.1%</span><span class="price-value">${tva.toFixed(2)} CHF</span></div>`;
     html += `<div class="price-total" style="margin-top:2px"><span>Total TTC</span><span>${ttc.toFixed(2)} CHF</span></div>`;
 
     if (!buildingData || !buildingData.garea) {
