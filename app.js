@@ -42,7 +42,7 @@ const BEXIO_IDS = {
     article_cecb_plus: 3,       // Etablissement d'un certificat CECB Plus, en sus
     article_frais_emission: 10, // Frais d'emission du rapport CECB
     article_forfait_execution: 12, // Prise de mesure (pas de plans)
-    tax_id: 22,                 // UN81 - Revenue 8.10%
+    tax_id: 28,                 // TVA 8.1%
     unit_id: 3                   // 3 = forfait (ensemble)
 };
 
